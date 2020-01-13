@@ -17,12 +17,23 @@
 package org.gradle.internal.vfs
 
 import org.gradle.integtests.fixtures.AbstractIntegrationSpec
+import org.gradle.integtests.fixtures.executer.GradleContextualExecuter
+import spock.lang.IgnoreIf
 
 import static org.gradle.internal.service.scopes.VirtualFileSystemServices.VFS_PARTIAL_INVALIDATION_ENABLED_PROPERTY
 
+@IgnoreIf({ GradleContextualExecuter.vfsRetention })
 class VirtualFileSystemPartialInvalidationIntegrationTest extends AbstractIntegrationSpec {
 
     private static final INCUBATING_MESSAGE = "Partial virtual file system invalidation is an incubating feature"
+
+    def setup() {
+        executer.beforeExecute {
+            // Don't enable partial vfs invalidation by default,
+            // the test cases enable and disable on their own.
+            withPartialVfsInvalidation(false)
+        }
+    }
 
     def "incubating message is shown for partial invalidation"() {
         buildFile << """

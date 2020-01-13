@@ -23,14 +23,14 @@ plugins {
 description = "Package build cache results"
 
 dependencies {
+    api(project(":buildCacheBase"))
+
     implementation(project(":baseServices"))
-    implementation(project(":native"))
     implementation(project(":coreApi"))
     implementation(project(":buildCache"))
     implementation(project(":files"))
     implementation(project(":snapshots"))
 
-    implementation(library("jsr305"))
     implementation(library("slf4j_api"))
     implementation(library("guava"))
     implementation(library("inject"))
@@ -40,7 +40,7 @@ dependencies {
     testImplementation(project(":processServices"))
     testImplementation(project(":fileCollections"))
     testImplementation(project(":resources"))
-    
+
     testImplementation(testFixtures(project(":baseServices")))
     testImplementation(testFixtures(project(":core")))
     testImplementation(testFixtures(project(":snapshots")))

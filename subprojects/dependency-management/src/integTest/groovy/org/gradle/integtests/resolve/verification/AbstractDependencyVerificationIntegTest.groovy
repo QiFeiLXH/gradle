@@ -16,6 +16,7 @@
 
 package org.gradle.integtests.resolve.verification
 
+import org.gradle.api.internal.DocumentationRegistry
 import org.gradle.api.internal.artifacts.verification.DependencyVerificationFixture
 import org.gradle.integtests.fixtures.AbstractHttpDependencyResolutionTest
 import org.gradle.integtests.fixtures.executer.GradleExecuter
@@ -70,7 +71,7 @@ class AbstractDependencyVerificationIntegTest extends AbstractHttpDependencyReso
 
     }
 
-    protected void uncheckedModule(String group, String name, String version = "1.0", @DelegatesTo(value = MavenHttpModule, strategy = Closure.DELEGATE_FIRST) Closure conf = null) {
+    protected MavenHttpModule uncheckedModule(String group, String name, String version = "1.0", @DelegatesTo(value = MavenHttpModule, strategy = Closure.DELEGATE_FIRST) Closure conf = null) {
         def mod = mavenHttpRepo.module(group, name, version)
             .allowAll()
         if (conf) {
@@ -85,5 +86,9 @@ class AbstractDependencyVerificationIntegTest extends AbstractHttpDependencyReso
         def pluginBuilder = new PluginBuilder(file("some-plugin"))
         pluginBuilder.addPlugin("println 'Hello, Gradle!'")
         pluginBuilder.publishAs("com", "myplugin", "1.0", pluginRepo, executer).allowAll()
+    }
+
+    static String getDocsUrl() {
+        new DocumentationRegistry().getDocumentationFor("dependency_verification", "sec:troubleshooting-verification")
     }
 }

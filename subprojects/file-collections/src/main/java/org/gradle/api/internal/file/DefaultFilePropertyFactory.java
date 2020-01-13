@@ -38,7 +38,7 @@ import org.gradle.internal.state.Managed;
 import javax.annotation.Nullable;
 import java.io.File;
 
-public class DefaultFilePropertyFactory implements FilePropertyFactory {
+public class DefaultFilePropertyFactory implements FilePropertyFactory, FileFactory {
     private final FileResolver fileResolver;
     private final FileCollectionFactory fileCollectionFactory;
 
@@ -57,6 +57,18 @@ public class DefaultFilePropertyFactory implements FilePropertyFactory {
         return new DefaultRegularFileVar(fileResolver);
     }
 
+    @Override
+    public Directory dir(File dir) {
+        dir = fileResolver.resolve(dir);
+        return new FixedDirectory(dir, fileResolver.newResolver(dir), fileCollectionFactory);
+    }
+
+    @Override
+    public RegularFile file(File file) {
+        file = fileResolver.resolve(file);
+        return new FixedFile(file);
+    }
+
     static class FixedDirectory extends DefaultFileSystemLocation implements Directory, Managed {
         final FileResolver fileResolver;
         private final FileCollectionFactory fileCollectionFactory;
@@ -68,7 +80,7 @@ public class DefaultFilePropertyFactory implements FilePropertyFactory {
         }
 
         @Override
-        public boolean immutable() {
+        public boolean isImmutable() {
             return true;
         }
 
@@ -126,7 +138,7 @@ public class DefaultFilePropertyFactory implements FilePropertyFactory {
         }
 
         @Override
-        public boolean immutable() {
+        public boolean isImmutable() {
             return true;
         }
 

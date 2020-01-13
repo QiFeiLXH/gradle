@@ -17,8 +17,10 @@
 package org.gradle.instantexecution.serialization.codecs
 
 import org.gradle.api.Project
+import org.gradle.api.Script
 import org.gradle.api.artifacts.ConfigurationContainer
 import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.file.ProjectLayout
 import org.gradle.api.initialization.Settings
 import org.gradle.api.internal.artifacts.dsl.dependencies.ProjectFinder
 import org.gradle.api.internal.artifacts.transform.ArtifactTransformActionScheme
@@ -41,7 +43,7 @@ import org.gradle.api.tasks.TaskContainer
 import org.gradle.api.tasks.util.internal.PatternSpecFactory
 import org.gradle.execution.plan.TaskNodeFactory
 import org.gradle.initialization.BuildRequestMetaData
-import org.gradle.instantexecution.serialization.ownerService
+import org.gradle.instantexecution.serialization.ownerServiceCodec
 import org.gradle.instantexecution.serialization.reentrant
 import org.gradle.instantexecution.serialization.unsupported
 import org.gradle.internal.event.ListenerManager
@@ -65,6 +67,7 @@ import org.gradle.internal.serialize.BaseSerializerFactory.STRING_SERIALIZER
 import org.gradle.internal.serialize.HashCodeSerializer
 import org.gradle.internal.snapshot.ValueSnapshotter
 import org.gradle.internal.state.ManagedFactoryRegistry
+import org.gradle.kotlin.dsl.*
 import org.gradle.process.ExecOperations
 import org.gradle.process.internal.ExecActionFactory
 import org.gradle.tooling.provider.model.ToolingModelBuilderRegistry
@@ -87,7 +90,6 @@ class Codecs(
     classLoaderHierarchyHasher: ClassLoaderHierarchyHasher,
     isolatableFactory: IsolatableFactory,
     valueSnapshotter: ValueSnapshotter,
-    fileCollectionFingerprinterRegistry: FileCollectionFingerprinterRegistry,
     buildServiceRegistry: BuildServiceRegistryInternal,
     managedFactoryRegistry: ManagedFactoryRegistry,
     parameterScheme: ArtifactTransformParameterScheme,
@@ -104,6 +106,8 @@ class Codecs(
         bind(unsupported<Settings>())
         bind(unsupported<TaskContainer>())
         bind(unsupported<ConfigurationContainer>())
+        bind(unsupported<KotlinScript>())
+        bind(unsupported<Script>())
 
         baseTypes()
 
@@ -115,16 +119,14 @@ class Codecs(
         bind(ListenerBroadcastCodec(listenerManager))
         bind(LoggerCodec)
 
-        bind(FileTreeCodec(directoryFileTreeFactory))
-        bind(ConfigurableFileCollectionCodec(fileCollectionFactory))
-        bind(FileCollectionCodec(fileCollectionFactory))
-        bind(PatternSetCodec)
+        fileCollectionTypes(directoryFileTreeFactory, fileCollectionFactory)
 
         bind(ClosureCodec)
         bind(GroovyMetaClassCodec)
 
         // Dependency management types
-        bind(ArtifactCollectionCodec)
+        bind(ArtifactCollectionCodec(fileCollectionFactory))
+        bind(ImmutableAttributeCodec(attributesFactory))
         bind(AttributeContainerCodec(attributesFactory))
         bind(TransformationNodeReferenceCodec)
 
@@ -133,22 +135,24 @@ class Codecs(
 
         bind(TaskReferenceCodec)
 
-        bind(ownerService<ProviderFactory>())
-        bind(ownerService<ObjectFactory>())
-        bind(ownerService<PatternSpecFactory>())
-        bind(ownerService<FileResolver>())
-        bind(ownerService<Instantiator>())
-        bind(ownerService<FileCollectionFactory>())
-        bind(ownerService<FileSystemOperations>())
-        bind(ownerService<FileOperations>())
-        bind(ownerService<BuildOperationExecutor>())
-        bind(ownerService<ToolingModelBuilderRegistry>())
-        bind(ownerService<ExecOperations>())
-        bind(ownerService<ExecActionFactory>())
-        bind(ownerService<BuildOperationListenerManager>())
-        bind(ownerService<BuildRequestMetaData>())
-        bind(ownerService<WorkerExecutor>())
-        bind(ownerService<ListenerManager>())
+        bind(ownerServiceCodec<ProviderFactory>())
+        bind(ownerServiceCodec<ObjectFactory>())
+        bind(ownerServiceCodec<WorkerExecutor>())
+        bind(ownerServiceCodec<ProjectLayout>())
+        bind(ownerServiceCodec<PatternSpecFactory>())
+        bind(ownerServiceCodec<FileResolver>())
+        bind(ownerServiceCodec<Instantiator>())
+        bind(ownerServiceCodec<FileCollectionFactory>())
+        bind(ownerServiceCodec<FileSystemOperations>())
+        bind(ownerServiceCodec<FileOperations>())
+        bind(ownerServiceCodec<BuildOperationExecutor>())
+        bind(ownerServiceCodec<ToolingModelBuilderRegistry>())
+        bind(ownerServiceCodec<ExecOperations>())
+        bind(ownerServiceCodec<ExecActionFactory>())
+        bind(ownerServiceCodec<BuildOperationListenerManager>())
+        bind(ownerServiceCodec<BuildRequestMetaData>())
+        bind(ownerServiceCodec<ListenerManager>())
+        bind(ServicesCodec())
 
         bind(ProxyCodec)
 
@@ -166,15 +170,16 @@ class Codecs(
         baseTypes()
 
         providerTypes(filePropertyFactory, buildServiceRegistry, valueSourceProviderFactory)
+        fileCollectionTypes(directoryFileTreeFactory, fileCollectionFactory)
 
         bind(TaskNodeCodec(projectStateRegistry, userTypesCodec, taskNodeFactory))
         bind(InitialTransformationNodeCodec(buildOperationExecutor, transformListener))
         bind(ChainedTransformationNodeCodec(buildOperationExecutor, transformListener))
+        bind(ActionNodeCodec)
         bind(ResolvableArtifactCodec)
         bind(TransformationStepCodec(projectStateRegistry, fingerprinterRegistry, projectFinder))
-        bind(DefaultTransformerCodec(buildOperationExecutor, classLoaderHierarchyHasher, isolatableFactory, valueSnapshotter, fileCollectionFactory, fileLookup, fileCollectionFingerprinterRegistry, parameterScheme, actionScheme))
+        bind(DefaultTransformerCodec(userTypesCodec, buildOperationExecutor, classLoaderHierarchyHasher, isolatableFactory, valueSnapshotter, fileCollectionFactory, fileLookup, parameterScheme, actionScheme))
         bind(LegacyTransformerCodec(actionScheme))
-        bind(ExecutionGraphDependenciesResolverCodec)
 
         bind(IsolatedManagedValueCodec(managedFactoryRegistry))
         bind(IsolatedImmutableManagedValueCodec(managedFactoryRegistry))
@@ -189,6 +194,8 @@ class Codecs(
         bind(FileValueSnapshotCodec)
         bind(BooleanValueSnapshotCodec)
         bind(NullValueSnapshotCodec)
+
+        bind(NotImplementedCodec)
     }
 
     private
@@ -202,6 +209,14 @@ class Codecs(
         bind(BuildServiceProviderCodec(buildServiceRegistry))
         bind(ValueSourceProviderCodec(valueSourceProviderFactory))
         bind(ProviderCodec)
+    }
+
+    private
+    fun BindingsBuilder.fileCollectionTypes(directoryFileTreeFactory: DirectoryFileTreeFactory, fileCollectionFactory: FileCollectionFactory) {
+        bind(FileTreeCodec(directoryFileTreeFactory))
+        bind(ConfigurableFileCollectionCodec(fileCollectionFactory))
+        bind(FileCollectionCodec(fileCollectionFactory))
+        bind(PatternSetCodec)
     }
 
     private

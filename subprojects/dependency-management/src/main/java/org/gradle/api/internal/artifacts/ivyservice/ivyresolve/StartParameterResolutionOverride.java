@@ -16,22 +16,33 @@
 package org.gradle.api.internal.artifacts.ivyservice.ivyresolve;
 
 import org.gradle.StartParameter;
+import org.gradle.api.GradleException;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
+import org.gradle.api.artifacts.result.ResolvedArtifactResult;
+import org.gradle.api.artifacts.verification.DependencyVerificationMode;
+import org.gradle.api.internal.DocumentationRegistry;
+import org.gradle.api.internal.artifacts.configurations.ResolutionStrategyInternal;
 import org.gradle.api.internal.artifacts.configurations.dynamicversion.CachePolicy;
-import org.gradle.internal.hash.ChecksumService;
-import org.gradle.api.internal.artifacts.ivyservice.ivyresolve.verification.ChecksumVerificationOverride;
+import org.gradle.api.internal.artifacts.ivyservice.ivyresolve.verification.ChecksumAndSignatureVerificationOverride;
 import org.gradle.api.internal.artifacts.ivyservice.ivyresolve.verification.DependencyVerificationOverride;
-import org.gradle.api.internal.artifacts.ivyservice.ivyresolve.verification.WriteDependencyVerificationFile;
+import org.gradle.api.internal.artifacts.ivyservice.ivyresolve.verification.writer.WriteDependencyVerificationFile;
 import org.gradle.api.internal.artifacts.ivyservice.resolutionstrategy.ExternalResourceCachePolicy;
 import org.gradle.api.internal.artifacts.repositories.resolver.MetadataFetchingCost;
+import org.gradle.api.internal.artifacts.verification.signatures.SignatureVerificationServiceFactory;
 import org.gradle.api.internal.component.ArtifactType;
+import org.gradle.api.invocation.Gradle;
+import org.gradle.api.logging.Logger;
+import org.gradle.api.logging.Logging;
 import org.gradle.api.resources.ResourceException;
+import org.gradle.internal.UncheckedException;
 import org.gradle.internal.component.external.model.ModuleDependencyMetadata;
 import org.gradle.internal.component.model.ComponentArtifactMetadata;
 import org.gradle.internal.component.model.ComponentOverrideMetadata;
 import org.gradle.internal.component.model.ComponentResolveMetadata;
 import org.gradle.internal.component.model.ConfigurationMetadata;
 import org.gradle.internal.component.model.ModuleSources;
+import org.gradle.internal.concurrent.Stoppable;
+import org.gradle.internal.hash.ChecksumService;
 import org.gradle.internal.operations.BuildOperationExecutor;
 import org.gradle.internal.resolve.ArtifactResolveException;
 import org.gradle.internal.resolve.ModuleVersionResolveException;
@@ -47,6 +58,7 @@ import org.gradle.internal.resource.transfer.ExternalResourceReadResponse;
 import org.gradle.util.SingleMessageLogger;
 
 import javax.annotation.Nullable;
+import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
@@ -74,17 +86,32 @@ public class StartParameterResolutionOverride {
         return original;
     }
 
-    public DependencyVerificationOverride dependencyVerificationOverride(BuildOperationExecutor buildOperationExecutor, ChecksumService checksumService) {
+    public DependencyVerificationOverride dependencyVerificationOverride(BuildOperationExecutor buildOperationExecutor,
+                                                                         ChecksumService checksumService,
+                                                                         SignatureVerificationServiceFactory signatureVerificationServiceFactory,
+                                                                         DocumentationRegistry documentationRegistry) {
         File currentDir = startParameter.getCurrentDir();
         List<String> checksums = startParameter.getWriteDependencyVerifications();
         if (!checksums.isEmpty()) {
             SingleMessageLogger.incubatingFeatureUsed("Dependency verification");
-            return new WriteDependencyVerificationFile(currentDir, buildOperationExecutor, checksums, checksumService);
+            return DisablingVerificationOverride.of(
+                new WriteDependencyVerificationFile(currentDir, buildOperationExecutor, checksums, checksumService, signatureVerificationServiceFactory, startParameter.isDryRun(), startParameter.isExportKeys())
+            );
         } else {
             File verificationsFile = DependencyVerificationOverride.dependencyVerificationsFile(currentDir);
+            File keyringsFile = DependencyVerificationOverride.keyringsFile(currentDir);
             if (verificationsFile.exists()) {
+                if (startParameter.getDependencyVerificationMode() == DependencyVerificationMode.OFF) {
+                    return DependencyVerificationOverride.NO_VERIFICATION;
+                }
                 SingleMessageLogger.incubatingFeatureUsed("Dependency verification");
-                return new ChecksumVerificationOverride(buildOperationExecutor, verificationsFile, checksumService);
+                try {
+                    return DisablingVerificationOverride.of(
+                        new ChecksumAndSignatureVerificationOverride(buildOperationExecutor, startParameter.getGradleUserHomeDir(), verificationsFile, keyringsFile, checksumService, signatureVerificationServiceFactory, startParameter.getDependencyVerificationMode(), documentationRegistry)
+                    );
+                } catch (Exception e) {
+                    return new FailureVerificationOverride(e);
+                }
             }
         }
         return DependencyVerificationOverride.NO_VERIFICATION;
@@ -189,4 +216,68 @@ public class StartParameterResolutionOverride {
         }
     }
 
+    private static class FailureVerificationOverride implements DependencyVerificationOverride {
+        private final Exception error;
+
+        private FailureVerificationOverride(Exception error) {
+            this.error = error;
+        }
+
+        @Override
+        public ModuleComponentRepository overrideDependencyVerification(ModuleComponentRepository original, String resolveContextName, ResolutionStrategyInternal resolutionStrategy) {
+            throw new GradleException("Dependency verification cannot be performed", error);
+        }
+    }
+
+    public static class DisablingVerificationOverride implements DependencyVerificationOverride, Stoppable {
+        private final static Logger LOGGER = Logging.getLogger(DependencyVerificationOverride.class);
+
+        private final DependencyVerificationOverride delegate;
+
+        public static DisablingVerificationOverride of(DependencyVerificationOverride delegate) {
+            return new DisablingVerificationOverride(delegate);
+        }
+
+        private DisablingVerificationOverride(DependencyVerificationOverride delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public ModuleComponentRepository overrideDependencyVerification(ModuleComponentRepository original, String resolveContextName, ResolutionStrategyInternal resolutionStrategy) {
+            if (resolutionStrategy.isDependencyVerificationEnabled()) {
+                return delegate.overrideDependencyVerification(original, resolveContextName, resolutionStrategy);
+            } else {
+                LOGGER.warn("Dependency verification has been disabled for configuration " + resolveContextName);
+                return original;
+            }
+        }
+
+        @Override
+        public void buildFinished(Gradle gradle) {
+            delegate.buildFinished(gradle);
+        }
+
+        @Override
+        public void artifactsAccessed(String displayName) {
+            delegate.artifactsAccessed(displayName);
+        }
+
+        @Override
+        public ResolvedArtifactResult verifiedArtifact(ResolvedArtifactResult artifact) {
+            return delegate.verifiedArtifact(artifact);
+        }
+
+        @Override
+        public void stop() {
+            if (delegate instanceof Stoppable) {
+                ((Stoppable) delegate).stop();
+            } else if (delegate instanceof Closeable) {
+                try {
+                    ((Closeable) delegate).close();
+                } catch (IOException e) {
+                    throw UncheckedException.throwAsUncheckedException(e);
+                }
+            }
+        }
+    }
 }

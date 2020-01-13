@@ -45,6 +45,7 @@ class DefaultFileCollectionSnapshotterTest extends Specification {
     @Rule
     TestNameTestDirectoryProvider tmpDir = new TestNameTestDirectoryProvider()
     def snapshotter = TestFiles.fileCollectionSnapshotter()
+    def noopGenerationListener = {} as GeneratedSingletonFileTree.FileGenerationListener
 
 
     def "snapshots a singletonFileTree as RegularFileSnapshot"() {
@@ -186,7 +187,7 @@ class DefaultFileCollectionSnapshotterTest extends Specification {
         }
 
         when:
-        def tree = new FileTreeAdapter(new GeneratedSingletonFileTree(factory, file.name, action))
+        def tree = new FileTreeAdapter(new GeneratedSingletonFileTree(factory, file.name, noopGenerationListener, action))
 
         then:
         assertSingleFileTree(tree)
